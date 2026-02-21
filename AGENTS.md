@@ -5,14 +5,15 @@
 エージェントは変更時に既存挙動を壊さず、最小差分で修正してください。
 
 ## 対象
-- メイン実装: `/Users/donadona/Desktop/doc/.obsidian/plugins/list-move-plugin/main.js`
-- メタ情報: `/Users/donadona/Desktop/doc/.obsidian/plugins/list-move-plugin/manifest.json`
+- メイン実装: `main.js`
+- メタ情報: `manifest.json`
 
 ## 実装ルール
 - Node/CommonJS スタイル（`require` / `module.exports`）を維持する。
 - 既存ホットキー仕様（`Alt + ArrowUp/ArrowDown`）を変更しない。
 - 複数行選択時は「連続行の移動」を優先する現仕様を維持する。
 - リスト行単体時は「同一インデント階層のブロック移動」を優先する。
+- TypeScript の TSDoc は日本語で記述し、一般的な対象（`const` / `type` / `interface` / `class` / `function` / `method`）には原則付与する。
 - 挙動変更を伴う場合は README の仕様セクションを同時に更新する。
 
 ## 変更時チェックリスト
