@@ -1,0 +1,9 @@
+{
+  "id": "list-move-plugin",
+  "name": "List Move Plugin",
+  "version": "0.0.2",
+  "minAppVersion": "1.1.0",
+  "description": "Move lines or list item blocks with Option+ArrowUp/ArrowDown.",
+  "author": "donadona",
+  "isDesktopOnly": false
+}
