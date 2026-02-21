@@ -1,7 +1,8 @@
 # List Move Plugin
 
 Obsidian で行またはリスト項目ブロックを上下に移動するプラグインです。  
-`Alt + ArrowUp` / `Alt + ArrowDown` で操作できます。
+`Option (macOS) / Alt (Windows, Linux) + ArrowUp` と  
+`Option (macOS) / Alt (Windows, Linux) + ArrowDown` で操作できます。
 
 ## 機能
 - 単一行カーソル時:
