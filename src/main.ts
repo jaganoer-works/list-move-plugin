@@ -1,9 +1,30 @@
-import { Editor, EditorPosition, Plugin } from "obsidian";
+import { Editor, EditorPosition, Notice, Plugin } from "obsidian";
 
 /**
  * 箇条書き・番号付き・タスクの各リスト行を判定する正規表現。
  */
 const LIST_ITEM_RE = /^\s*(?:[-*+]\s|\d+[.)]\s|[-*+]\s\[[ xX]\]\s)/;
+
+/**
+ * コピーボタンを挿入する対象のコードブロック要素セレクタ。
+ */
+const COPY_TARGET_SELECTOR =
+  ".markdown-reading-view .markdown-rendered pre, .markdown-source-view.mod-cm6 .cm-preview-code-block pre";
+
+/**
+ * コピーボタン要素に付与するクラス名。
+ */
+const COPY_BUTTON_CLASS = "list-move-plugin-copy-button";
+
+/**
+ * コピーボタンのホスト要素を識別する属性名。
+ */
+const COPY_BUTTON_MARKER_ATTR = "data-list-move-copy-ready";
+
+/**
+ * ホスト要素の `position` を本プラグインが設定したことを識別する属性名。
+ */
+const COPY_POSITION_MARKER_ATTR = "data-list-move-copy-position-set";
 
 /**
  * 移動方向を表すユニオン型。
@@ -153,6 +174,145 @@ function setSelectionByLineRange(editor: Editor, startLine: number, endLine: num
 function setCursorSafely(editor: Editor, line: number, ch: number): void {
   const lineLength = editor.getLine(line).length;
   editor.setCursor({ line, ch: Math.min(ch, lineLength) });
+}
+
+/**
+ * コードブロック要素からコピー対象テキストを取得する。
+ *
+ * @param codeBlockEl - `pre` 要素。
+ * @returns コピー対象の文字列。
+ */
+function getCodeBlockText(codeBlockEl: HTMLElement): string {
+  const codeEl = codeBlockEl.querySelector("code");
+  if (codeEl != null && codeEl.textContent != null) {
+    return codeEl.textContent;
+  }
+  return codeBlockEl.textContent ?? "";
+}
+
+/**
+ * 文字列をクリップボードに書き込む。
+ * `navigator.clipboard` が利用できない環境では `execCommand` にフォールバックする。
+ *
+ * @param text - コピーする文字列。
+ * @returns 書き込み成功時は true。
+ */
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText != null) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // noop: フォールバック処理へ進む
+    }
+  }
+
+  if (typeof document === "undefined") {
+    return false;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  textarea.style.pointerEvents = "none";
+  document.body.appendChild(textarea);
+  textarea.select();
+
+  let succeeded = false;
+  try {
+    succeeded = document.execCommand("copy");
+  } finally {
+    textarea.remove();
+  }
+
+  return succeeded;
+}
+
+/**
+ * 対象コードブロックへコピーボタンを追加する。
+ *
+ * @param codeBlockEl - `pre` 要素。
+ */
+function attachCopyButton(codeBlockEl: HTMLElement): void {
+  if (codeBlockEl.getAttribute(COPY_BUTTON_MARKER_ATTR) === "true") {
+    return;
+  }
+
+  codeBlockEl.setAttribute(COPY_BUTTON_MARKER_ATTR, "true");
+  if (codeBlockEl.style.position === "") {
+    codeBlockEl.style.position = "relative";
+    codeBlockEl.setAttribute(COPY_POSITION_MARKER_ATTR, "true");
+  }
+
+  const buttonEl = document.createElement("button");
+  buttonEl.type = "button";
+  buttonEl.className = COPY_BUTTON_CLASS;
+  buttonEl.textContent = "Copy";
+  buttonEl.style.position = "absolute";
+  buttonEl.style.top = "0.5em";
+  buttonEl.style.right = "0.5em";
+  buttonEl.style.zIndex = "1";
+  buttonEl.style.fontSize = "12px";
+  buttonEl.style.padding = "2px 8px";
+  buttonEl.style.borderRadius = "6px";
+  buttonEl.style.border = "1px solid var(--background-modifier-border)";
+  buttonEl.style.background = "var(--background-primary)";
+  buttonEl.style.cursor = "pointer";
+
+  buttonEl.addEventListener("click", async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const text = getCodeBlockText(codeBlockEl);
+    if (text.length === 0) {
+      new Notice("コピー対象のコードがありません");
+      return;
+    }
+
+    const copied = await copyTextToClipboard(text);
+    if (!copied) {
+      new Notice("コードのコピーに失敗しました");
+      return;
+    }
+
+    new Notice("コードをコピーしました");
+  });
+
+  codeBlockEl.appendChild(buttonEl);
+}
+
+/**
+ * 指定コンテナ内に追加済みのコピーボタン関連要素を撤去する。
+ *
+ * @param containerEl - 探索対象コンテナ。
+ */
+function clearCopyButtons(containerEl: ParentNode): void {
+  const hosts = containerEl.querySelectorAll<HTMLElement>(`[${COPY_BUTTON_MARKER_ATTR}="true"]`);
+  for (const host of hosts) {
+    const buttons = host.querySelectorAll<HTMLElement>(`.${COPY_BUTTON_CLASS}`);
+    for (const button of buttons) {
+      button.remove();
+    }
+    host.removeAttribute(COPY_BUTTON_MARKER_ATTR);
+
+    if (host.getAttribute(COPY_POSITION_MARKER_ATTR) === "true") {
+      host.style.position = "";
+      host.removeAttribute(COPY_POSITION_MARKER_ATTR);
+    }
+  }
+}
+
+/**
+ * 指定コンテナ内のコードブロックにコピーボタンを追加する。
+ *
+ * @param containerEl - 探索対象コンテナ。
+ */
+function decorateCopyButtons(containerEl: ParentNode): void {
+  const codeBlocks = containerEl.querySelectorAll<HTMLElement>(COPY_TARGET_SELECTOR);
+  for (const codeBlock of codeBlocks) {
+    attachCopyButton(codeBlock);
+  }
 }
 
 /**
@@ -388,9 +548,52 @@ function executeMove(editor: Editor, direction: MoveDirection): void {
  */
 export default class ListMovePlugin extends Plugin {
   /**
+   * コードブロック検知用の DOM 監視インスタンス。
+   */
+  private copyButtonObserver: MutationObserver | null = null;
+
+  /**
+   * コードブロックへのコピーボタン付与処理を初期化する。
+   */
+  private initializeCopyButtonFeature(): void {
+    decorateCopyButtons(this.app.workspace.containerEl);
+
+    this.copyButtonObserver = new MutationObserver((records: MutationRecord[]) => {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          if (!(node instanceof HTMLElement)) {
+            continue;
+          }
+          decorateCopyButtons(node);
+          if (node.matches(COPY_TARGET_SELECTOR)) {
+            attachCopyButton(node);
+          }
+        }
+      }
+    });
+
+    this.copyButtonObserver.observe(this.app.workspace.containerEl, {
+      childList: true,
+      subtree: true,
+    });
+
+    this.register(() => {
+      if (this.copyButtonObserver == null) {
+        clearCopyButtons(this.app.workspace.containerEl);
+        return;
+      }
+      this.copyButtonObserver.disconnect();
+      this.copyButtonObserver = null;
+      clearCopyButtons(this.app.workspace.containerEl);
+    });
+  }
+
+  /**
    * コマンドを登録してプラグインを初期化する。
    */
   onload(): void {
+    this.initializeCopyButtonFeature();
+
     this.addCommand({
       id: "move-list-up",
       name: "Move line or list item up",
