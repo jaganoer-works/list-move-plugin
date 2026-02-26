@@ -29,6 +29,9 @@ var COPY_TARGET_SELECTOR = ".markdown-reading-view .markdown-rendered pre, .mark
 var COPY_BUTTON_CLASS = "list-move-plugin-copy-button";
 var COPY_BUTTON_MARKER_ATTR = "data-list-move-copy-ready";
 var COPY_POSITION_MARKER_ATTR = "data-list-move-copy-position-set";
+var DEFAULT_SETTINGS = {
+  preferListBlockMove: true
+};
 function normalizeIndent(leadingWhitespace) {
   return leadingWhitespace.replace(/\t/g, "    ").length;
 }
@@ -300,7 +303,7 @@ function moveListBlock(editor, cursor, direction) {
   setCursorSafely(editor, currentStart + nextBlock.length + lineOffsetInBlock, cursor.ch);
   return true;
 }
-function executeMove(editor, direction) {
+function executeMove(editor, direction, preferListBlockMove) {
   const selection = getSelectionLines(editor);
   if (selection.isMultiLine) {
     const moved = moveLineRange(editor, selection.startLine, selection.endLine, direction);
@@ -313,11 +316,13 @@ function executeMove(editor, direction) {
   }
   const cursor = editor.getCursor();
   const lineText = editor.getLine(cursor.line);
-  if (isListLine(lineText)) {
+  if (preferListBlockMove && isListLine(lineText)) {
     const movedList = moveListBlock(editor, cursor, direction);
     if (movedList) {
       return;
     }
+    new import_obsidian.Notice("\u540C\u4E00\u968E\u5C64\u306E\u79FB\u52D5\u5148\u304C\u306A\u3044\u305F\u3081\u3001\u30EA\u30B9\u30C8\u30D6\u30ED\u30C3\u30AF\u3092\u79FB\u52D5\u3067\u304D\u307E\u305B\u3093");
+    return;
   }
   const movedLine = moveLineRange(editor, cursor.line, cursor.line, direction);
   if (!movedLine) {
@@ -326,13 +331,59 @@ function executeMove(editor, direction) {
   const delta = direction === "up" ? -1 : 1;
   setCursorSafely(editor, cursor.line + delta, cursor.ch);
 }
+var ListMovePluginSettingTab = class extends import_obsidian.PluginSettingTab {
+  /**
+   * 設定タブを初期化する。
+   *
+   * @param app - Obsidian アプリケーションインスタンス。
+   * @param plugin - 設定値を保持するプラグイン本体。
+   */
+  constructor(app, plugin) {
+    super(app, plugin);
+    this.plugin = plugin;
+  }
+  /**
+   * 設定画面を描画する。
+   */
+  display() {
+    const { containerEl } = this;
+    containerEl.empty();
+    new import_obsidian.Setting(containerEl).setName("\u5358\u4E00\u30EA\u30B9\u30C8\u884C\u3092\u30D6\u30ED\u30C3\u30AF\u5358\u4F4D\u3067\u79FB\u52D5").setDesc("\u30AA\u30D5\u306B\u3059\u308B\u3068\u3001\u30EA\u30B9\u30C8\u884C\u3067\u3082\u5E38\u306B1\u884C\u5358\u4F4D\u3067\u79FB\u52D5\u3057\u307E\u3059\u3002").addToggle((toggle) => {
+      toggle.setValue(this.plugin.settings.preferListBlockMove);
+      toggle.onChange(async (value) => {
+        this.plugin.settings.preferListBlockMove = value;
+        await this.plugin.saveSettings();
+      });
+    });
+  }
+};
 var ListMovePlugin = class extends import_obsidian.Plugin {
   constructor() {
     super(...arguments);
     /**
+     * 現在のプラグイン設定。
+     */
+    this.settings = DEFAULT_SETTINGS;
+    /**
      * コードブロック検知用の DOM 監視インスタンス。
      */
     this.copyButtonObserver = null;
+  }
+  /**
+   * 永続化された設定を読み込み、未定義項目はデフォルト値で補完する。
+   */
+  async loadSettings() {
+    const loaded = await this.loadData();
+    this.settings = {
+      ...DEFAULT_SETTINGS,
+      ...loaded
+    };
+  }
+  /**
+   * 現在の設定を永続化する。
+   */
+  async saveSettings() {
+    await this.saveData(this.settings);
   }
   /**
    * コードブロックへのコピーボタン付与処理を初期化する。
@@ -369,14 +420,16 @@ var ListMovePlugin = class extends import_obsidian.Plugin {
   /**
    * コマンドを登録してプラグインを初期化する。
    */
-  onload() {
+  async onload() {
+    await this.loadSettings();
+    this.addSettingTab(new ListMovePluginSettingTab(this.app, this));
     this.initializeCopyButtonFeature();
     this.addCommand({
       id: "move-list-up",
       name: "Move line or list item up",
       hotkeys: [{ modifiers: ["Alt"], key: "ArrowUp" }],
       editorCallback: (editor) => {
-        executeMove(editor, "up");
+        executeMove(editor, "up", this.settings.preferListBlockMove);
       }
     });
     this.addCommand({
@@ -384,7 +437,7 @@ var ListMovePlugin = class extends import_obsidian.Plugin {
       name: "Move line or list item down",
       hotkeys: [{ modifiers: ["Alt"], key: "ArrowDown" }],
       editorCallback: (editor) => {
-        executeMove(editor, "down");
+        executeMove(editor, "down", this.settings.preferListBlockMove);
       }
     });
   }

@@ -1,4 +1,4 @@
-import { Editor, EditorPosition, Notice, Plugin } from "obsidian";
+import { App, Editor, EditorPosition, Notice, Plugin, PluginSettingTab, Setting } from "obsidian";
 
 /**
  * 箇条書き・番号付き・タスクの各リスト行を判定する正規表現。
@@ -30,6 +30,23 @@ const COPY_POSITION_MARKER_ATTR = "data-list-move-copy-position-set";
  * 移動方向を表すユニオン型。
  */
 type MoveDirection = "up" | "down";
+
+/**
+ * プラグイン設定の永続データ構造。
+ */
+interface ListMovePluginSettings {
+  /**
+   * 単一カーソル時にリスト行をブロック単位で移動するか。
+   */
+  preferListBlockMove: boolean;
+}
+
+/**
+ * プラグイン設定のデフォルト値。
+ */
+const DEFAULT_SETTINGS: ListMovePluginSettings = {
+  preferListBlockMove: true,
+};
 
 /**
  * 選択範囲を行単位で表現した情報。
@@ -509,8 +526,10 @@ function moveListBlock(editor: Editor, cursor: EditorPosition, direction: MoveDi
  *
  * @param editor - Obsidian のエディタインスタンス。
  * @param direction - 移動方向。
+ * @param preferListBlockMove - 単一カーソル時にリスト行のブロック移動を優先するか。
+ * true の場合はブロック移動のみを行い、失敗時に1行移動へはフォールバックしない。
  */
-function executeMove(editor: Editor, direction: MoveDirection): void {
+function executeMove(editor: Editor, direction: MoveDirection, preferListBlockMove: boolean): void {
   const selection = getSelectionLines(editor);
 
   if (selection.isMultiLine) {
@@ -527,11 +546,13 @@ function executeMove(editor: Editor, direction: MoveDirection): void {
   const cursor = editor.getCursor();
   const lineText = editor.getLine(cursor.line);
 
-  if (isListLine(lineText)) {
+  if (preferListBlockMove && isListLine(lineText)) {
     const movedList = moveListBlock(editor, cursor, direction);
     if (movedList) {
       return;
     }
+    new Notice("同一階層の移動先がないため、リストブロックを移動できません");
+    return;
   }
 
   const movedLine = moveLineRange(editor, cursor.line, cursor.line, direction);
@@ -544,13 +565,76 @@ function executeMove(editor: Editor, direction: MoveDirection): void {
 }
 
 /**
+ * `list-move-plugin` の設定タブ。
+ */
+class ListMovePluginSettingTab extends PluginSettingTab {
+  /**
+   * 設定値を保持するプラグイン本体。
+   */
+  private readonly plugin: ListMovePlugin;
+
+  /**
+   * 設定タブを初期化する。
+   *
+   * @param app - Obsidian アプリケーションインスタンス。
+   * @param plugin - 設定値を保持するプラグイン本体。
+   */
+  constructor(app: App, plugin: ListMovePlugin) {
+    super(app, plugin);
+    this.plugin = plugin;
+  }
+
+  /**
+   * 設定画面を描画する。
+   */
+  display(): void {
+    const { containerEl } = this;
+    containerEl.empty();
+
+    new Setting(containerEl)
+      .setName("単一リスト行をブロック単位で移動")
+      .setDesc("オフにすると、リスト行でも常に1行単位で移動します。")
+      .addToggle((toggle) => {
+        toggle.setValue(this.plugin.settings.preferListBlockMove);
+        toggle.onChange(async (value: boolean) => {
+          this.plugin.settings.preferListBlockMove = value;
+          await this.plugin.saveSettings();
+        });
+      });
+  }
+}
+
+/**
  * Obsidian プラグインのエントリクラス。
  */
 export default class ListMovePlugin extends Plugin {
   /**
+   * 現在のプラグイン設定。
+   */
+  settings: ListMovePluginSettings = DEFAULT_SETTINGS;
+
+  /**
    * コードブロック検知用の DOM 監視インスタンス。
    */
   private copyButtonObserver: MutationObserver | null = null;
+
+  /**
+   * 永続化された設定を読み込み、未定義項目はデフォルト値で補完する。
+   */
+  private async loadSettings(): Promise<void> {
+    const loaded = await this.loadData();
+    this.settings = {
+      ...DEFAULT_SETTINGS,
+      ...(loaded as Partial<ListMovePluginSettings> | null),
+    };
+  }
+
+  /**
+   * 現在の設定を永続化する。
+   */
+  async saveSettings(): Promise<void> {
+    await this.saveData(this.settings);
+  }
 
   /**
    * コードブロックへのコピーボタン付与処理を初期化する。
@@ -591,7 +675,10 @@ export default class ListMovePlugin extends Plugin {
   /**
    * コマンドを登録してプラグインを初期化する。
    */
-  onload(): void {
+  async onload(): Promise<void> {
+    await this.loadSettings();
+    this.addSettingTab(new ListMovePluginSettingTab(this.app, this));
+
     this.initializeCopyButtonFeature();
 
     this.addCommand({
@@ -599,7 +686,7 @@ export default class ListMovePlugin extends Plugin {
       name: "Move line or list item up",
       hotkeys: [{ modifiers: ["Alt"], key: "ArrowUp" }],
       editorCallback: (editor: Editor) => {
-        executeMove(editor, "up");
+        executeMove(editor, "up", this.settings.preferListBlockMove);
       },
     });
 
@@ -608,7 +695,7 @@ export default class ListMovePlugin extends Plugin {
       name: "Move line or list item down",
       hotkeys: [{ modifiers: ["Alt"], key: "ArrowDown" }],
       editorCallback: (editor: Editor) => {
-        executeMove(editor, "down");
+        executeMove(editor, "down", this.settings.preferListBlockMove);
       },
     });
   }
